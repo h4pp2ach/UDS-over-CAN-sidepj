@@ -11,7 +11,7 @@ Python 기반으로 CAN, ISO-TP, UDS, 그리고 UDS 기반 Firmware Download 과
 
 ```text
 Firmware Binary
-    ↓드
+    ↓
 UDS Flashing Client
     ↓
 ISO-TP Transport Layer
@@ -43,7 +43,9 @@ Virtual Flash Memory
 ├── setup_vcan.sh
 ├── del_vcan.sh
 ├── listening_python_can.py
+├── listening_isotp.py
 ├── send_python_can.py
+├── send_isotp_scenario.py
 ├── src/
 └── tests/
 ```
@@ -51,6 +53,7 @@ Virtual Flash Memory
 ## Documentation
 
 - [Step 1. CAN Frame Parser](docs/01_can_frame_parser.md)
+- [Step 2. ISO-TP Basics](docs/02_isotp_basics.md)
 
 ## Current Status
 
@@ -59,6 +62,9 @@ Virtual Flash Memory
 - `python-can` 메시지 parser 구현
 - `vcan0` 송신/수신 예제 스크립트 구현
 - parser 단위 테스트 구성
+- ISO-TP frame parser와 payload reassembler 구현
+- ISO-TP 전용 listener 구현
+- ISO-TP 시나리오 sender 구현
 
 ## Roadmap
 
