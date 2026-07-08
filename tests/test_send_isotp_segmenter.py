@@ -20,6 +20,19 @@ def test_build_multi_frame_messages():
     ]
 
 
+def test_segmenter_respects_tx_data_length():
+    frames = segment_isotp_payload(
+        bytes.fromhex("36 01 AA BB CC DD EE FF 00 11 22"),
+        tx_data_length=7,
+    )
+
+    assert frames == [
+        bytes.fromhex("10 0B 36 01 AA BB CC"),
+        bytes.fromhex("21 DD EE FF 00 11 22"),
+    ]
+    assert all(len(frame) <= 7 for frame in frames)
+
+
 def test_build_isotp_messages_wraps_segmented_data_with_can_id():
     messages = build_isotp_messages(0x7E0, bytes.fromhex("10 01"))
 
@@ -57,13 +70,13 @@ def test_find_scenario_by_menu_key():
 
 
 @pytest.mark.parametrize(
-    ("can_id", "payload", "expected_message"),
+    ("payload", "expected_message"),
     [
-        (0x7E0, b"", "ISO-TP payload must not be empty"),
-        (0x7E0, bytes([0xAA]) * 0x1000, "ISO-TP payload supports up to 4095 bytes"),
+        (b"", "ISO-TP payload must not be empty"),
+        (bytes([0xAA]) * 0x1000, "ISO-TP payload supports up to 4095 bytes"),
     ],
 )
-def test_invalid_payload_raises_value_error(can_id, payload, expected_message):
+def test_invalid_payload_raises_value_error(payload, expected_message):
     with pytest.raises(ValueError, match=expected_message):
         segment_isotp_payload(payload)
 
@@ -71,3 +84,8 @@ def test_invalid_payload_raises_value_error(can_id, payload, expected_message):
 def test_unknown_scenario_raises_value_error():
     with pytest.raises(ValueError, match="Unknown scenario: 9"):
         find_scenario("9")
+
+
+def test_invalid_tx_data_length_raises_value_error():
+    with pytest.raises(ValueError, match="tx_data_length must be between 3 and 8"):
+        segment_isotp_payload(bytes.fromhex("10 01"), tx_data_length=2)
