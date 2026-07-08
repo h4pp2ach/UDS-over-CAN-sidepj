@@ -1,7 +1,8 @@
 # UDS-over-CAN-sidepj
 
-Python 기반으로 CAN, ISO-TP, UDS, 그리고 UDS 기반 Firmware Download 과정을 직접 구현하며 학습하는 사이드 프로젝트입니다.
+Python 기반으로 CAN, ISO-TP, UDS 및 Firmware Download 과정을 직접 구현하며 학습하는 사이드 프로젝트입니다.
 
+<br />
 
 ## Goal
 
@@ -23,6 +24,8 @@ Virtual ECU
 Virtual Flash Memory
 ```
 
+<br />
+
 ## Environment
 
 - Ubuntu 22.04 or later
@@ -31,6 +34,8 @@ Virtual Flash Memory
 - can-utils
 - python-can
 - pytest
+
+<br />
 
 ## Project Structure
 
@@ -50,10 +55,14 @@ Virtual Flash Memory
 └── tests/
 ```
 
+<br />
+
 ## Documentation
 
 - [Step 1. CAN Frame Parser](docs/01_can_frame_parser.md)
 - [Step 2. ISO-TP Basics](docs/02_isotp_basics.md)
+
+<br />
 
 ## Current Status
 
@@ -65,6 +74,8 @@ Virtual Flash Memory
 - ISO-TP frame parser와 payload reassembler 구현
 - ISO-TP 전용 listener 구현
 - ISO-TP 시나리오 sender 구현
+
+<br />
 
 ## Roadmap
 
