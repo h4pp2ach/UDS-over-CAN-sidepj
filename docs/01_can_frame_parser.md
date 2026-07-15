@@ -172,7 +172,7 @@ exit
 
 - `pyproject.toml`
   - pytest 설정을 담고 있습니다.
-  - `pythonpath = ["src"]` 설정으로 테스트에서 `src` 아래 모듈을 바로 import합니다.
+  - `pythonpath = [".", "src"]` 설정으로 테스트에서 root 예제와 `src` 모듈을 바로 import합니다.
 
 - `setup_vcan.sh`
   - Linux 커널의 `vcan` 모듈을 로드합니다.

@@ -60,7 +60,8 @@ Virtual Flash Memory
 ## Documentation
 
 - [Step 1. CAN Frame Parser](docs/01_can_frame_parser.md)
-- [Step 2. ISO-TP Basics](docs/02_isotp_basics.md)
+- [Step 2-1. ISO-TP Basics](docs/02-1_isotp_basics.md)
+- [Step 2-2. ISO-TP Transport Layer](docs/02-2_isotp_transport_layer.md)
 
 <br />
 
@@ -70,17 +71,19 @@ Virtual Flash Memory
 - `candump` 텍스트 로그 parser 구현
 - `python-can` 메시지 parser 구현
 - `vcan0` 송신/수신 예제 스크립트 구현
-- parser 단위 테스트 구성
 - ISO-TP frame parser와 payload reassembler 구현
 - ISO-TP 전용 listener 구현
 - ISO-TP 시나리오 sender 구현
+- ISO-TP Transport Layer 송수신 API와 Flow Control, BS, STmin, timeout 처리 구현
+- CAN ID 필터링과 in-memory/`vcan0` Transport Layer 데모 구현
 
 <br />
 
 ## Roadmap
 
 - Step 1. CAN Frame Parser
-- Step 2. ISO-TP Transport Layer
+- Step 2-1. ISO-TP Basics
+- Step 2-2. ISO-TP Transport Layer
 - Step 3. UDS Diagnostic Service Handling
 - Step 4. UDS Flashing Client
 - Step 5. Virtual ECU
