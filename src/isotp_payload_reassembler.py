@@ -41,6 +41,9 @@ class IsoTpPayloadReassembler:
 
         self.reset()
 
+        if frame.length <= 0:
+            raise ValueError("Single Frame length must be positive")
+
         if frame.length != len(frame.payload):
             raise ValueError("Single Frame length does not match payload length")
 
