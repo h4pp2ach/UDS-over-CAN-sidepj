@@ -7,6 +7,8 @@
 - `candump` 텍스트 로그
 - `python-can`의 `can.Message` 객체
 
+<br />
+
 ## Environment Setup
 
 이 프로젝트는 Linux SocketCAN 환경을 기준으로 합니다. `vcan` 인터페이스를 만들기 위해 `sudo`, `modprobe`, `ip link` 명령을 사용합니다.
@@ -36,24 +38,7 @@ sudo apt update
 sudo apt install can-utils
 ```
 
-## Files
-
-```text
-.
-├── requirements.txt
-├── pyproject.toml
-├── setup_vcan.sh
-├── del_vcan.sh
-├── listening_python_can.py
-├── send_python_can.py
-├── src
-│   ├── frame.py
-│   ├── candump_parser.py
-│   └── python_can_parser.py
-└── tests
-    ├── test_candump_parser.py
-    └── test_python_can_parser.py
-```
+<br />
 
 ## Parser Roles
 
@@ -68,6 +53,8 @@ python_can_parser   : python-can Message 객체 -> CANFrame
 
 반대로 `candump vcan0` 출력이나 저장된 candump 로그를 읽는 기능을 만들면 `candump_parser`를 사용합니다.
 
+<br />
+
 ## Test
 
 가상환경을 활성화한 뒤 pytest를 실행합니다.
@@ -81,6 +68,8 @@ python -m pytest
 
 - `candump` 문자열을 `CANFrame`으로 변환
 - `python-can` 메시지를 `CANFrame`으로 변환
+
+<br />
 
 ## vcan Setup
 
@@ -97,6 +86,8 @@ python -m pytest
 ```bash
 ip link show vcan0
 ```
+
+<br />
 
 ## Example Flow
 
@@ -155,6 +146,8 @@ exit
 
 수신기를 종료하려면 `Ctrl+C`를 누릅니다.
 
+<br />
+
 ## Cleanup
 
 실험이 끝난 뒤 `vcan0` 인터페이스를 삭제하려면 다음 명령을 실행합니다.
@@ -163,7 +156,31 @@ exit
 ./del_vcan.sh
 ```
 
+<br />
+<br />
+
 # Files
+
+### **Files**
+
+```text
+.
+├── requirements.txt
+├── pyproject.toml
+├── setup_vcan.sh
+├── del_vcan.sh
+├── listening_python_can.py
+├── send_python_can.py
+├── src
+│   ├── frame.py
+│   ├── candump_parser.py
+│   └── python_can_parser.py
+└── tests
+    ├── test_candump_parser.py
+    └── test_python_can_parser.py
+```
+
+<br />
 
 ## Root Files
 
@@ -193,6 +210,8 @@ exit
   - 예: `7E0 02 10 01 AA AA AA AA AA`
   - `q`, `quit`, `exit` 중 하나를 입력하면 종료합니다.
 
+<br />
+
 ## Source Files
 
 - `src/frame.py`
@@ -206,6 +225,8 @@ exit
 - `src/python_can_parser.py`
   - `python-can`의 `can.Message` 객체를 `CANFrame`으로 변환합니다.
   - `listening_python_can.py`에서 수신한 메시지를 표준 형태로 바꿀 때 사용합니다.
+
+<br />
 
 ## Test Files
 
