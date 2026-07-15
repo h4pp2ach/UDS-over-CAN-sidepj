@@ -51,6 +51,11 @@ def parse_isotp_frame(data: bytes):
 
     if frame_type == 0x0:
         length = pci & 0x0F
+
+        # Classical CAN 범위에서는 SF_DL=0 escape sequence를 지원하지 않는다.
+        if length == 0:
+            raise ValueError("Single Frame payload length must be positive")
+
         payload = data[1:1 + length]
 
         if len(payload) != length:
