@@ -1,10 +1,11 @@
 from dataclasses import dataclass
 
+import can
 import pytest
 
 from isotp_frame import FlowStatus
 from isotp_transport_layer import (
-    CanMessageRouter,
+    IsoTpCanError,
     IsoTpFlowControlError,
     IsoTpProtocolError,
     IsoTpTimeoutError,
@@ -40,25 +41,20 @@ class FakeBus:
         return self.incoming_messages.pop(0)
 
 
-class NonWeakrefBus:
-    __slots__ = ("incoming_messages", "sent_messages", "events")
-
-    def __init__(self, incoming_messages=None):
-        self.incoming_messages = list(incoming_messages or [])
-        self.sent_messages = []
-        self.events = []
+class FailingCanBus(FakeBus):
+    def __init__(self, *, fail_on: str):
+        super().__init__()
+        self.fail_on = fail_on
 
     def send(self, msg):
-        self.sent_messages.append(msg)
-        self.events.append(("send", msg.arbitration_id, bytes(msg.data)))
+        if self.fail_on == "send":
+            raise can.CanOperationError("send failed")
+        return super().send(msg)
 
     def recv(self, timeout=None):
-        self.events.append(("recv", timeout))
-
-        if not self.incoming_messages:
-            return None
-
-        return self.incoming_messages.pop(0)
+        if self.fail_on == "recv":
+            raise can.CanOperationError("receive failed")
+        return super().recv(timeout=timeout)
 
 
 def incoming(can_id: int, data: str, *, is_extended_id: bool = False) -> IncomingMessage:
@@ -80,6 +76,8 @@ def send_events(bus: FakeBus) -> list[tuple[str, int, bytes]]:
     ]
 
 
+# 기능 그룹: Transport 기본 송수신과 흐름 제어
+# 검증 목적: Multi Frame 송수신 시 FC 대기, STmin 간격, Block Size 처리가 올바른 순서로 수행되는지 확인한다.
 def test_recv_first_frame_sends_flow_control_and_reassembles_payload():
     bus = FakeBus(
         [
@@ -193,6 +191,8 @@ def test_recv_sends_additional_flow_control_after_configured_block_size():
     ]
 
 
+# 기능 그룹: Transport 클라이언트와 서버 역할
+# 검증 목적: 동일한 request/response CAN ID 설정이 역할에 따라 반대 송수신 방향으로 적용되는지 확인한다.
 def test_client_and_server_roles_use_request_and_response_ids_oppositely():
     client_bus = FakeBus()
     client = IsoTpTransportLayer.for_client(
@@ -214,6 +214,8 @@ def test_client_and_server_roles_use_request_and_response_ids_oppositely():
     assert sent(server_bus) == [(0x7E8, bytes.fromhex("02 50 03"))]
 
 
+# 기능 그룹: Transport 프레임 길이와 padding
+# 검증 목적: SF, FC, 마지막 CF의 padding 및 tx_data_length 기반 분할과 설정값 검증이 정확한지 확인한다.
 def test_padding_byte_pads_single_frame_to_tx_data_length():
     bus = FakeBus()
     transport = IsoTpTransportLayer.for_client(
@@ -301,6 +303,8 @@ def test_invalid_tx_data_length_raises_value_error():
         )
 
 
+# 기능 그룹: 수신 CAN ID 필터링
+# 검증 목적: 현재 Transport 대상이 아닌 CAN ID를 건너뛰고 지정된 응답만 처리하는지 확인한다.
 def test_recv_ignores_unrelated_can_id_until_response_id_arrives():
     bus = FakeBus(
         [
@@ -317,84 +321,31 @@ def test_recv_ignores_unrelated_can_id_until_response_id_arrives():
     assert transport.recv() == bytes.fromhex("62 00")
 
 
-def test_transports_on_same_bus_do_not_drop_each_other_messages():
+def test_recv_keeps_one_deadline_while_skipping_unrelated_can_ids(monkeypatch):
+    monotonic_values = iter([100.0, 100.0, 100.25])
+    monkeypatch.setattr(
+        "isotp_transport_layer.time.monotonic",
+        lambda: next(monotonic_values),
+    )
     bus = FakeBus(
         [
-            incoming(0x709, "02 BB 00"),
-            incoming(0x708, "02 AA 00"),
+            incoming(0x123, "02 AA BB"),
+            incoming(0x7E8, "02 62 00"),
         ]
     )
-    transport_a = IsoTpTransportLayer.for_client(
+    transport = IsoTpTransportLayer.for_client(
         bus,
-        request_can_id=0x700,
-        response_can_id=0x708,
-    )
-    transport_b = IsoTpTransportLayer.for_client(
-        bus,
-        request_can_id=0x701,
-        response_can_id=0x709,
+        request_can_id=0x7E0,
+        response_can_id=0x7E8,
     )
 
-    assert transport_a.recv() == bytes.fromhex("AA 00")
-    assert transport_b.recv() == bytes.fromhex("BB 00")
+    assert transport.recv() == bytes.fromhex("62 00")
+    recv_timeouts = [event[1] for event in bus.events if event[0] == "recv"]
+    assert recv_timeouts == [pytest.approx(1.0), pytest.approx(0.75)]
 
 
-def test_non_weakref_bus_requires_explicit_router():
-    with pytest.raises(TypeError, match="pass CanMessageRouter explicitly"):
-        IsoTpTransportLayer.for_client(
-            NonWeakrefBus(),
-            request_can_id=0x700,
-            response_can_id=0x708,
-        )
-
-
-def test_explicit_router_supports_non_weakref_bus():
-    bus = NonWeakrefBus(
-        [
-            incoming(0x709, "02 BB 00"),
-            incoming(0x708, "02 AA 00"),
-        ]
-    )
-    router = CanMessageRouter(bus)
-    transport_a = IsoTpTransportLayer.for_client(
-        router,
-        request_can_id=0x700,
-        response_can_id=0x708,
-    )
-    transport_b = IsoTpTransportLayer.for_client(
-        router,
-        request_can_id=0x701,
-        response_can_id=0x709,
-    )
-
-    assert transport_a.recv() == bytes.fromhex("AA 00")
-    assert transport_b.recv() == bytes.fromhex("BB 00")
-
-
-def test_router_bounds_pending_messages_per_can_id():
-    bus = FakeBus(
-        [
-            incoming(0x709, "02 BB 01"),
-            incoming(0x709, "02 BB 02"),
-            incoming(0x708, "02 AA 00"),
-        ]
-    )
-    router = CanMessageRouter(bus, max_pending_per_id=1)
-    transport_a = IsoTpTransportLayer.for_client(
-        router,
-        request_can_id=0x700,
-        response_can_id=0x708,
-    )
-    transport_b = IsoTpTransportLayer.for_client(
-        router,
-        request_can_id=0x701,
-        response_can_id=0x709,
-    )
-
-    assert transport_a.recv() == bytes.fromhex("AA 00")
-    assert transport_b.recv() == bytes.fromhex("BB 02")
-
-
+# 기능 그룹: CAN 주소 형식과 Transport 설정 검증
+# 검증 목적: Standard/Extended CAN ID 구분과 중복 ID, 잘못된 타입의 설정값을 명확한 예외로 거부하는지 확인한다.
 def test_extended_can_id_is_explicit_for_send_and_receive():
     bus = FakeBus(
         [
@@ -424,7 +375,7 @@ def test_standard_address_rejects_29_bit_can_id_without_extended_flag():
         )
 
 
-def test_same_tx_rx_can_id_is_rejected_by_default():
+def test_same_tx_rx_can_id_is_rejected():
     with pytest.raises(ValueError, match="tx_can_id and rx_can_id must be different"):
         IsoTpTransportLayer.for_client(
             FakeBus(),
@@ -452,6 +403,52 @@ def test_flow_control_byte_must_be_integer():
         )
 
 
+@pytest.mark.parametrize(
+    ("field_name", "field_value", "expected_exception", "expected_message"),
+    [
+        (
+            "frame_timeout_seconds",
+            float("nan"),
+            ValueError,
+            "frame_timeout_seconds must be positive and finite",
+        ),
+        (
+            "frame_timeout_seconds",
+            "1",
+            TypeError,
+            "frame_timeout_seconds must be a number",
+        ),
+        (
+            "max_wait_frame_count",
+            1.5,
+            TypeError,
+            "max_wait_frame_count must be an integer",
+        ),
+        (
+            "max_wait_frame_count",
+            -1,
+            ValueError,
+            "max_wait_frame_count must not be negative",
+        ),
+    ],
+)
+def test_transport_rejects_invalid_timeout_and_wait_configuration(
+    field_name,
+    field_value,
+    expected_exception,
+    expected_message,
+):
+    with pytest.raises(expected_exception, match=expected_message):
+        IsoTpTransportLayer.for_client(
+            FakeBus(),
+            request_can_id=0x7E0,
+            response_can_id=0x7E8,
+            **{field_name: field_value},
+        )
+
+
+# 기능 그룹: Transport 프로토콜 오류와 timeout 처리
+# 검증 목적: 분할기 오류를 Transport 예외로 변환하고 FC 또는 후속 프레임 미수신을 timeout으로 처리하는지 확인한다.
 def test_send_wraps_segmenter_value_error():
     transport = IsoTpTransportLayer.for_client(
         FakeBus(),
@@ -491,6 +488,70 @@ def test_recv_raises_timeout_when_expected_frame_does_not_arrive():
     assert sent(bus) == [(0x7E0, bytes.fromhex("30 00 00"))]
 
 
+def test_send_wraps_can_bus_error_as_transport_error():
+    transport = IsoTpTransportLayer.for_client(
+        FailingCanBus(fail_on="send"),
+        request_can_id=0x7E0,
+        response_can_id=0x7E8,
+    )
+
+    with pytest.raises(IsoTpCanError, match="CAN bus send failed") as exc_info:
+        transport.send(bytes.fromhex("10 03"))
+
+    assert isinstance(exc_info.value.__cause__, can.CanOperationError)
+
+
+def test_recv_wraps_can_bus_error_as_transport_error():
+    transport = IsoTpTransportLayer.for_client(
+        FailingCanBus(fail_on="recv"),
+        request_can_id=0x7E0,
+        response_can_id=0x7E8,
+    )
+
+    with pytest.raises(IsoTpCanError, match="CAN bus receive failed") as exc_info:
+        transport.recv()
+
+    assert isinstance(exc_info.value.__cause__, can.CanOperationError)
+
+
+def test_send_rejects_non_flow_control_frame_while_waiting_for_fc():
+    bus = FakeBus([incoming(0x7E8, "02 62 00")])
+    transport = IsoTpTransportLayer.for_client(
+        bus,
+        request_can_id=0x7E0,
+        response_can_id=0x7E8,
+    )
+
+    with pytest.raises(IsoTpProtocolError, match="Expected Flow Control Frame"):
+        transport.send(bytes.fromhex("36 01 AA BB CC DD EE FF 00 11 22"))
+
+
+def test_send_wraps_invalid_received_st_min_as_protocol_error():
+    bus = FakeBus([incoming(0x7E8, "30 00 80")])
+    transport = IsoTpTransportLayer.for_client(
+        bus,
+        request_can_id=0x7E0,
+        response_can_id=0x7E8,
+    )
+
+    with pytest.raises(IsoTpProtocolError, match="st_min must be"):
+        transport.send(bytes.fromhex("36 01 AA BB CC DD EE FF 00 11 22"))
+
+
+def test_recv_wraps_malformed_raw_frame_as_protocol_error():
+    bus = FakeBus([incoming(0x7E8, "40 00 00")])
+    transport = IsoTpTransportLayer.for_client(
+        bus,
+        request_can_id=0x7E0,
+        response_can_id=0x7E8,
+    )
+
+    with pytest.raises(IsoTpProtocolError, match="Unsupported ISO-TP frame type"):
+        transport.recv()
+
+
+# 기능 그룹: Flow Control 상태와 STmin 처리
+# 검증 목적: WAIT 재시도와 한도, OVERFLOW 중단, FC 바이트 생성 및 STmin 디코딩 규칙을 확인한다.
 def test_send_allows_wait_flow_control_then_continues_after_cts():
     bus = FakeBus(
         [

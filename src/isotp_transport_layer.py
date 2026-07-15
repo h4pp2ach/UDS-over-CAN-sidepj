@@ -1,9 +1,7 @@
-from collections import deque
 from dataclasses import dataclass
+import math
 import time
 from typing import Callable
-import weakref
-from weakref import WeakKeyDictionary
 
 import can
 
@@ -27,7 +25,6 @@ MAX_STANDARD_CAN_ID = 0x7FF
 MAX_FLOW_CONTROL_BYTE = 0xFF
 DEFAULT_FRAME_TIMEOUT_SECONDS = 1.0
 DEFAULT_MAX_WAIT_FRAME_COUNT = 8
-DEFAULT_MAX_PENDING_MESSAGES_PER_ID = 100
 
 
 class IsoTpTransportError(Exception):
@@ -46,119 +43,8 @@ class IsoTpFlowControlError(IsoTpTransportError):
     pass
 
 
-@dataclass(frozen=True)
-class CanMessageKey:
-    can_id: int
-    is_extended_id: bool
-
-
-class CanMessageRouter:
-    def __init__(
-        self,
-        bus,
-        *,
-        max_pending_per_id: int = DEFAULT_MAX_PENDING_MESSAGES_PER_ID,
-        monotonic_function: Callable[[], float] = time.monotonic,
-    ) -> None:
-        validate_max_pending_per_id(max_pending_per_id)
-        self._bus = bus
-        self.max_pending_per_id = max_pending_per_id
-        self._monotonic = monotonic_function
-        self._pending_messages: dict[CanMessageKey, deque] = {}
-
-    def send(self, msg) -> None:
-        self._bus.send(msg)
-
-    def recv(
-        self,
-        *,
-        can_id: int,
-        is_extended_id: bool,
-        timeout_seconds: float,
-    ):
-        key = CanMessageKey(can_id=can_id, is_extended_id=is_extended_id)
-        queued_msg = self._pop_pending_message(key)
-
-        if queued_msg is not None:
-            return queued_msg
-
-        deadline = self._monotonic() + timeout_seconds
-
-        while True:
-            remaining_seconds = deadline - self._monotonic()
-
-            if remaining_seconds <= 0:
-                return None
-
-            msg = self._bus.recv(timeout=remaining_seconds)
-
-            if msg is None:
-                return None
-
-            msg_key = self._message_key(msg)
-
-            if msg_key == key:
-                return msg
-
-            self._queue_pending_message(msg_key, msg)
-
-    def _pop_pending_message(self, key: CanMessageKey):
-        pending = self._pending_messages.get(key)
-
-        if not pending:
-            return None
-
-        msg = pending.popleft()
-
-        if not pending:
-            self._pending_messages.pop(key, None)
-
-        return msg
-
-    def _message_key(self, msg) -> CanMessageKey:
-        return CanMessageKey(
-            can_id=msg.arbitration_id,
-            is_extended_id=getattr(msg, "is_extended_id", False),
-        )
-
-    def _queue_pending_message(self, key: CanMessageKey, msg) -> None:
-        if self.max_pending_per_id == 0:
-            return
-
-        pending = self._pending_messages.setdefault(key, deque())
-
-        if len(pending) >= self.max_pending_per_id:
-            pending.popleft()
-
-        pending.append(msg)
-
-
-_MESSAGE_ROUTERS_BY_BUS = WeakKeyDictionary()
-
-
-def get_message_router(bus) -> CanMessageRouter:
-    if isinstance(bus, CanMessageRouter):
-        return bus
-
-    try:
-        weakref.ref(bus)
-    except TypeError as exc:
-        raise TypeError(
-            "bus must support weak references or pass CanMessageRouter explicitly"
-        ) from exc
-
-    try:
-        router = _MESSAGE_ROUTERS_BY_BUS.get(bus)
-    except TypeError as exc:
-        raise TypeError(
-            "bus must support weak references or pass CanMessageRouter explicitly"
-        ) from exc
-
-    if router is None:
-        router = CanMessageRouter(bus)
-        _MESSAGE_ROUTERS_BY_BUS[bus] = router
-
-    return router
+class IsoTpCanError(IsoTpTransportError):
+    pass
 
 
 @dataclass(frozen=True)
@@ -208,22 +94,18 @@ class IsoTpTransportLayer:
         max_wait_frame_count: int = DEFAULT_MAX_WAIT_FRAME_COUNT,
         tx_data_length: int = MAX_CLASSIC_CAN_DATA_LENGTH,
         padding_byte: int | None = None,
-        allow_same_can_id: bool = False,
         sleep_function: Callable[[float], None] = time.sleep,
     ) -> None:
-        validate_address(address, allow_same_can_id=allow_same_can_id)
+        validate_address(address)
         validate_flow_control_byte(block_size, "block_size")
         validate_st_min(st_min)
         validate_tx_data_length(tx_data_length)
         validate_padding_byte(padding_byte)
 
-        if frame_timeout_seconds <= 0:
-            raise ValueError("frame_timeout_seconds must be positive")
+        validate_positive_seconds(frame_timeout_seconds, "frame_timeout_seconds")
+        validate_non_negative_integer(max_wait_frame_count, "max_wait_frame_count")
 
-        if max_wait_frame_count < 0:
-            raise ValueError("max_wait_frame_count must not be negative")
-
-        self._message_router = get_message_router(bus)
+        self._bus = bus
         self.address = address
         self.block_size = block_size
         self.st_min = st_min
@@ -321,8 +203,7 @@ class IsoTpTransportLayer:
             self.frame_timeout_seconds if timeout_seconds is None else timeout_seconds
         )
 
-        if frame_timeout_seconds <= 0:
-            raise ValueError("timeout_seconds must be positive")
+        validate_positive_seconds(frame_timeout_seconds, "timeout_seconds")
 
         reassembler = IsoTpPayloadReassembler()
         received_in_block = 0
@@ -373,7 +254,10 @@ class IsoTpTransportLayer:
                 )
 
             if frame.flow_status == FlowStatus.CONTINUE_TO_SEND:
-                validate_st_min(frame.st_min)
+                try:
+                    validate_st_min(frame.st_min)
+                except ValueError as exc:
+                    raise IsoTpProtocolError(str(exc)) from exc
                 return frame
 
             if frame.flow_status == FlowStatus.WAIT:
@@ -400,16 +284,32 @@ class IsoTpTransportLayer:
             raise IsoTpProtocolError(str(exc)) from exc
 
     def _recv_message_for_rx_id(self, timeout_seconds: float):
-        msg = self._message_router.recv(
-            can_id=self.address.rx_can_id,
-            is_extended_id=self.address.is_extended_id,
-            timeout_seconds=timeout_seconds,
-        )
+        deadline = time.monotonic() + timeout_seconds
 
-        if msg is None:
-            raise IsoTpTimeoutError("Timed out waiting for ISO-TP CAN frame")
+        while True:
+            remaining_seconds = deadline - time.monotonic()
 
-        return msg
+            if remaining_seconds <= 0:
+                raise IsoTpTimeoutError("Timed out waiting for ISO-TP CAN frame")
+
+            try:
+                msg = self._bus.recv(timeout=remaining_seconds)
+            except can.CanError as exc:
+                raise IsoTpCanError("CAN bus receive failed") from exc
+
+            if msg is None:
+                raise IsoTpTimeoutError("Timed out waiting for ISO-TP CAN frame")
+
+            if msg.arbitration_id != self.address.rx_can_id:
+                continue
+
+            if (
+                getattr(msg, "is_extended_id", False)
+                != self.address.is_extended_id
+            ):
+                continue
+
+            return msg
 
     def _send_flow_control(self) -> None:
         self._send_can_data(
@@ -428,7 +328,11 @@ class IsoTpTransportLayer:
             is_extended_id=self.address.is_extended_id,
             check=True,
         )
-        self._message_router.send(msg)
+
+        try:
+            self._bus.send(msg)
+        except can.CanError as exc:
+            raise IsoTpCanError("CAN bus send failed") from exc
 
     def _pad_can_data(self, data: bytes) -> bytes:
         if len(data) > self.tx_data_length:
@@ -469,7 +373,7 @@ def validate_can_id(can_id: int) -> None:
         raise ValueError("CAN ID must be between 0x00000000 and 0x1FFFFFFF")
 
 
-def validate_address(address: IsoTpAddress, *, allow_same_can_id: bool) -> None:
+def validate_address(address: IsoTpAddress) -> None:
     validate_can_id(address.tx_can_id)
     validate_can_id(address.rx_can_id)
 
@@ -483,7 +387,7 @@ def validate_address(address: IsoTpAddress, *, allow_same_can_id: bool) -> None:
         if address.rx_can_id > MAX_STANDARD_CAN_ID:
             raise ValueError("standard rx_can_id must be between 0x000 and 0x7FF")
 
-    if not allow_same_can_id and address.tx_can_id == address.rx_can_id:
+    if address.tx_can_id == address.rx_can_id:
         raise ValueError("tx_can_id and rx_can_id must be different")
 
 
@@ -495,12 +399,25 @@ def validate_flow_control_byte(value: int, name: str) -> None:
         raise ValueError(f"{name} must be between 0 and 255")
 
 
-def validate_max_pending_per_id(max_pending_per_id: int) -> None:
-    if type(max_pending_per_id) is not int:
-        raise TypeError("max_pending_per_id must be an integer")
+def validate_positive_seconds(value: float, name: str) -> None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError(f"{name} must be a number")
 
-    if max_pending_per_id < 0:
-        raise ValueError("max_pending_per_id must not be negative")
+    try:
+        is_finite = math.isfinite(value)
+    except OverflowError:
+        is_finite = False
+
+    if value <= 0 or not is_finite:
+        raise ValueError(f"{name} must be positive and finite")
+
+
+def validate_non_negative_integer(value: int, name: str) -> None:
+    if type(value) is not int:
+        raise TypeError(f"{name} must be an integer")
+
+    if value < 0:
+        raise ValueError(f"{name} must not be negative")
 
 
 def validate_padding_byte(padding_byte: int | None) -> None:
