@@ -1,5 +1,6 @@
 import pytest
 
+from isotp_errors import IsoTpReassemblyError
 from isotp_frame import (
     ConsecutiveFrame,
     FirstFrame,
@@ -50,38 +51,38 @@ def test_reassemble_trims_last_consecutive_frame_padding():
 
 # 기능 그룹: 재조립 순서와 상태 오류 처리
 # 검증 목적: 잘못된 프레임 순서를 예외로 거부하고 진행 중인 조립 상태를 안전하게 초기화하는지 확인한다.
-def test_single_frame_during_multi_frame_raises_value_error_and_resets():
+def test_single_frame_during_multi_frame_raises_reassembly_error_and_resets():
     reassembler = IsoTpPayloadReassembler()
     reassembler.feed(FirstFrame(total_length=8, payload=bytes.fromhex("01 02 03 04 05 06")))
 
-    with pytest.raises(ValueError, match="Single Frame received while multi-frame payload is in progress"):
+    with pytest.raises(IsoTpReassemblyError, match="Single Frame received while multi-frame payload is in progress"):
         reassembler.feed(SingleFrame(length=2, payload=bytes.fromhex("10 01")))
 
     assert reassembler.is_in_progress is False
 
 
-def test_consecutive_frame_before_first_frame_raises_value_error():
+def test_consecutive_frame_before_first_frame_raises_reassembly_error():
     reassembler = IsoTpPayloadReassembler()
 
-    with pytest.raises(ValueError, match="Consecutive Frame received before First Frame"):
+    with pytest.raises(IsoTpReassemblyError, match="Consecutive Frame received before First Frame"):
         reassembler.feed(ConsecutiveFrame(sequence_number=1, payload=bytes.fromhex("01 02")))
 
 
-def test_unexpected_sequence_number_raises_value_error_and_resets():
+def test_unexpected_sequence_number_raises_reassembly_error_and_resets():
     reassembler = IsoTpPayloadReassembler()
     reassembler.feed(FirstFrame(total_length=8, payload=bytes.fromhex("01 02 03 04 05 06")))
 
-    with pytest.raises(ValueError, match="Unexpected sequence number: expected 1, got 2"):
+    with pytest.raises(IsoTpReassemblyError, match="Unexpected sequence number: expected 1, got 2"):
         reassembler.feed(ConsecutiveFrame(sequence_number=2, payload=bytes.fromhex("07 08")))
 
     assert reassembler.is_in_progress is False
 
 
-def test_empty_consecutive_frame_payload_raises_value_error_and_resets():
+def test_empty_consecutive_frame_payload_raises_reassembly_error_and_resets():
     reassembler = IsoTpPayloadReassembler()
     reassembler.feed(FirstFrame(total_length=8, payload=bytes.fromhex("01 02 03 04 05 06")))
 
-    with pytest.raises(ValueError, match="Consecutive Frame payload must not be empty"):
+    with pytest.raises(IsoTpReassemblyError, match="Consecutive Frame payload must not be empty"):
         reassembler.feed(ConsecutiveFrame(sequence_number=1, payload=b""))
 
     assert reassembler.is_in_progress is False
@@ -91,16 +92,16 @@ def test_invalid_new_first_frame_resets_in_progress_message():
     reassembler = IsoTpPayloadReassembler()
     reassembler.feed(FirstFrame(total_length=8, payload=bytes.fromhex("01 02 03 04 05 06")))
 
-    with pytest.raises(ValueError, match="First Frame received while multi-frame payload is in progress"):
+    with pytest.raises(IsoTpReassemblyError, match="First Frame received while multi-frame payload is in progress"):
         reassembler.feed(FirstFrame(total_length=9, payload=bytes.fromhex("AA BB CC DD EE FF")))
 
     assert reassembler.is_in_progress is False
 
 
-def test_flow_control_frame_raises_value_error():
+def test_flow_control_frame_raises_reassembly_error():
     reassembler = IsoTpPayloadReassembler()
 
-    with pytest.raises(ValueError, match="Flow Control Frame cannot be reassembled as payload"):
+    with pytest.raises(IsoTpReassemblyError, match="Flow Control Frame cannot be reassembled as payload"):
         reassembler.feed(
             FlowControlFrame(
                 flow_status=FlowStatus.CONTINUE_TO_SEND,
@@ -125,10 +126,10 @@ def test_flow_control_frame_raises_value_error():
         ),
     ],
 )
-def test_invalid_frame_state_raises_value_error(frame, expected_message):
+def test_invalid_frame_state_raises_reassembly_error(frame, expected_message):
     reassembler = IsoTpPayloadReassembler()
 
-    with pytest.raises(ValueError, match=expected_message):
+    with pytest.raises(IsoTpReassemblyError, match=expected_message):
         reassembler.feed(frame)
 
 

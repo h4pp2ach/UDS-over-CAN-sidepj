@@ -1,3 +1,4 @@
+from isotp_errors import IsoTpReassemblyError
 from isotp_frame import (
     ConsecutiveFrame,
     FirstFrame,
@@ -30,40 +31,48 @@ class IsoTpPayloadReassembler:
             return self._handle_consecutive_frame(frame)
 
         if isinstance(frame, FlowControlFrame):
-            raise ValueError("Flow Control Frame cannot be reassembled as payload")
+            raise IsoTpReassemblyError("Flow Control Frame cannot be reassembled as payload")
 
         raise TypeError(f"Unsupported ISO-TP frame object: {type(frame).__name__}")
 
     def _handle_single_frame(self, frame: SingleFrame) -> bytes:
         if self.is_in_progress:
             self.reset()
-            raise ValueError("Single Frame received while multi-frame payload is in progress")
+            raise IsoTpReassemblyError(
+                "Single Frame received while multi-frame payload is in progress"
+            )
 
         self.reset()
 
         if frame.length <= 0:
-            raise ValueError("Single Frame length must be positive")
+            raise IsoTpReassemblyError("Single Frame length must be positive")
 
         if frame.length != len(frame.payload):
-            raise ValueError("Single Frame length does not match payload length")
+            raise IsoTpReassemblyError(
+                "Single Frame length does not match payload length"
+            )
 
         return frame.payload
 
     def _handle_first_frame(self, frame: FirstFrame) -> None:
         if self.is_in_progress:
             self.reset()
-            raise ValueError("First Frame received while multi-frame payload is in progress")
+            raise IsoTpReassemblyError(
+                "First Frame received while multi-frame payload is in progress"
+            )
 
         self.reset()
 
         if frame.total_length <= 0:
-            raise ValueError("First Frame total length must be positive")
+            raise IsoTpReassemblyError("First Frame total length must be positive")
 
         if len(frame.payload) == 0:
-            raise ValueError("First Frame payload must not be empty")
+            raise IsoTpReassemblyError("First Frame payload must not be empty")
 
         if len(frame.payload) >= frame.total_length:
-            raise ValueError("First Frame payload must be shorter than total length")
+            raise IsoTpReassemblyError(
+                "First Frame payload must be shorter than total length"
+            )
 
         self._total_length = frame.total_length
         self._payload = bytearray(frame.payload)
@@ -73,16 +82,20 @@ class IsoTpPayloadReassembler:
 
     def _handle_consecutive_frame(self, frame: ConsecutiveFrame) -> bytes | None:
         if not self.is_in_progress:
-            raise ValueError("Consecutive Frame received before First Frame")
+            raise IsoTpReassemblyError(
+                "Consecutive Frame received before First Frame"
+            )
 
         if len(frame.payload) == 0:
             self.reset()
-            raise ValueError("Consecutive Frame payload must not be empty")
+            raise IsoTpReassemblyError(
+                "Consecutive Frame payload must not be empty"
+            )
 
         if frame.sequence_number != self._expected_sequence_number:
             expected = self._expected_sequence_number
             self.reset()
-            raise ValueError(
+            raise IsoTpReassemblyError(
                 f"Unexpected sequence number: expected {expected}, got {frame.sequence_number}"
             )
 

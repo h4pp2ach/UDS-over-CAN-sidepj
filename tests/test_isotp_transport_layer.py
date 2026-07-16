@@ -3,12 +3,19 @@ from dataclasses import dataclass
 import can
 import pytest
 
+from isotp_errors import (
+    IsoTpFrameParseError,
+    IsoTpReassemblyError,
+    IsoTpSegmentationError,
+)
 from isotp_frame import FlowStatus
 from isotp_transport_layer import (
     IsoTpCanError,
     IsoTpFlowControlError,
+    IsoTpPayloadError,
     IsoTpProtocolError,
     IsoTpTimeoutError,
+    IsoTpTransportError,
     IsoTpTransportLayer,
     build_flow_control_data,
     decode_st_min_seconds,
@@ -447,17 +454,40 @@ def test_transport_rejects_invalid_timeout_and_wait_configuration(
         )
 
 
-# 기능 그룹: Transport 프로토콜 오류와 timeout 처리
-# 검증 목적: 분할기 오류를 Transport 예외로 변환하고 FC 또는 후속 프레임 미수신을 timeout으로 처리하는지 확인한다.
-def test_send_wraps_segmenter_value_error():
+# 기능 그룹: Transport payload, 프로토콜 오류와 timeout 처리
+# 검증 목적: 송신 payload와 수신 protocol 오류를 원인별 Transport 예외로 변환하고 미수신을 timeout으로 처리하는지 확인한다.
+def test_send_wraps_segmentation_error_as_payload_error():
     transport = IsoTpTransportLayer.for_client(
         FakeBus(),
         request_can_id=0x7E0,
         response_can_id=0x7E8,
     )
 
-    with pytest.raises(IsoTpProtocolError, match="ISO-TP payload must not be empty"):
+    with pytest.raises(IsoTpPayloadError, match="ISO-TP payload must not be empty") as exc_info:
         transport.send(b"")
+
+    assert isinstance(exc_info.value.__cause__, IsoTpSegmentationError)
+
+
+def test_send_does_not_mask_unclassified_value_error(monkeypatch):
+    transport = IsoTpTransportLayer.for_client(
+        FakeBus(),
+        request_can_id=0x7E0,
+        response_can_id=0x7E8,
+    )
+
+    def raise_unclassified_value_error(*args, **kwargs):
+        raise ValueError("unexpected implementation error")
+
+    monkeypatch.setattr(
+        "isotp_transport_layer.segment_isotp_payload",
+        raise_unclassified_value_error,
+    )
+
+    with pytest.raises(ValueError, match="unexpected implementation error") as exc_info:
+        transport.send(bytes.fromhex("10 01"))
+
+    assert not isinstance(exc_info.value, IsoTpTransportError)
 
 
 def test_send_raises_timeout_when_flow_control_does_not_arrive():
@@ -546,8 +576,43 @@ def test_recv_wraps_malformed_raw_frame_as_protocol_error():
         response_can_id=0x7E8,
     )
 
-    with pytest.raises(IsoTpProtocolError, match="Unsupported ISO-TP frame type"):
+    with pytest.raises(IsoTpProtocolError, match="Unsupported ISO-TP frame type") as exc_info:
         transport.recv()
+
+    assert isinstance(exc_info.value.__cause__, IsoTpFrameParseError)
+
+
+def test_recv_wraps_reassembly_error_as_protocol_error():
+    bus = FakeBus(
+        [
+            incoming(0x7E8, "10 08 01 02 03 04 05 06"),
+            incoming(0x7E8, "22 07 08"),
+        ]
+    )
+    transport = IsoTpTransportLayer.for_client(
+        bus,
+        request_can_id=0x7E0,
+        response_can_id=0x7E8,
+    )
+
+    with pytest.raises(IsoTpProtocolError, match="Unexpected sequence number") as exc_info:
+        transport.recv()
+
+    assert isinstance(exc_info.value.__cause__, IsoTpReassemblyError)
+
+
+def test_recv_wraps_invalid_can_message_data_as_can_error():
+    bus = FakeBus([IncomingMessage(arbitration_id=0x7E8, data=None)])
+    transport = IsoTpTransportLayer.for_client(
+        bus,
+        request_can_id=0x7E0,
+        response_can_id=0x7E8,
+    )
+
+    with pytest.raises(IsoTpCanError, match="CAN message data is invalid") as exc_info:
+        transport.recv()
+
+    assert isinstance(exc_info.value.__cause__, TypeError)
 
 
 # 기능 그룹: Flow Control 상태와 STmin 처리

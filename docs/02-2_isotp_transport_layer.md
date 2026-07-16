@@ -501,9 +501,9 @@ CF #3 송신
 
 <br />
 
-## Error Handling
+## Error Boundary
 
-`IsoTpTimeoutError`는 frame 대기 초과, `IsoTpProtocolError`는 frame 형식·순서 오류, `IsoTpFlowControlError`는 `OVERFLOW`나 `WAIT` 제한 초과, `IsoTpCanError`는 CAN 송수신 실패를 나타내며 모두 `IsoTpTransportError`를 상속합니다.
+Transport가 사용하는 공통 예외 계층과 설계 근거는 [Step 2-1의 Design Choices](02-1_isotp_basics.md#design-choices)에서 설명합니다.
 
 <br />
 
@@ -996,48 +996,6 @@ padding_byte가 있으면 tx_data_length까지 채움
 </details>
 
 <br />
-
-<details close>
-<summary><strong>6. transport 오류를 유형별로 구분</strong></summary>
-<br />
-
-구현하려는 것:
-
-```text
-현재 demo와 transport 호출부가 실패 원인을 구분할 수 있는 error model
-```
-
-구현한 방식:
-
-```text
-IsoTpTransportError
-├── IsoTpTimeoutError
-├── IsoTpProtocolError
-├── IsoTpFlowControlError
-└── IsoTpCanError
-```
-
-왜 이렇게 했는가:
-
-- timeout은 필요한 frame이 도착하지 않은 상황을 나타냄
-- protocol error는 frame 순서, SN, 길이 같은 ISO-TP 형식 문제임
-- flow control error는 receiver가 전송을 멈추라고 했거나 WAIT 제한을 넘긴 경우임
-- CAN error는 underlying CAN bus의 송수신 실패임
-- 모두 `IsoTpTransportError`의 하위 타입이므로 demo에서 한 번에 잡거나 원인별로 나눠 출력할 수 있음
-
-다른 구현 방법:
-
-- 모든 실패를 `ValueError`로 처리
-  - 장점: 코드가 짧음
-  - 단점: demo와 호출부에서 원인 구분이 어려움
-- error code enum을 반환
-  - 장점: 예외를 쓰지 않는 스타일 가능
-  - 단점: Python 호출부에서 매번 반환값 검사를 강제해야 함
-
-현재 demo에서 timeout, Flow Control 실패, CAN 오류를 구분하기 위해 예외 class를 나눕니다.
-</details>
-
-<br />
 <br />
 
 # Files
@@ -1051,6 +1009,7 @@ IsoTpTransportError
 ├── isotp_transport_vcan_sender_demo.py
 ├── isotp_transport_vcan_interactive_receiver.py
 ├── src
+│   ├── isotp_errors.py
 │   ├── isotp_frame.py
 │   ├── isotp_payload_reassembler.py
 │   ├── isotp_tx_segmenter.py
@@ -1074,6 +1033,7 @@ IsoTpTransportError
 
 ## Source Files
 
+- `src/isotp_errors.py`: ISO-TP core validation과 transport 공개 예외 계층을 정의합니다.
 - `src/isotp_transport_layer.py`: ISO-TP 송수신, Flow Control, CAN ID 필터링, timeout을 관리하는 핵심 계층입니다.
 - `src/isotp_frame.py`: CAN data bytes를 ISO-TP frame 객체로 파싱합니다.
 - `src/isotp_payload_reassembler.py`: 수신한 SF 또는 FF/CF를 완성된 payload로 조립합니다.

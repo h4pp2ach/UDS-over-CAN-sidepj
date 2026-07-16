@@ -1,5 +1,6 @@
 import pytest
 
+from isotp_errors import IsoTpFrameParseError
 from isotp_frame import (
     parse_isotp_frame,
     SingleFrame,
@@ -83,13 +84,20 @@ def test_parse_flow_control_status(raw_data, expected_status):
         ("40 00 00", "Unsupported ISO-TP frame type: 4"),
     ],
 )
-def test_parse_invalid_isotp_frame_raises_value_error(raw_data, expected_message):
-    with pytest.raises(ValueError, match=expected_message):
+def test_parse_invalid_isotp_frame_raises_frame_parse_error(raw_data, expected_message):
+    with pytest.raises(IsoTpFrameParseError, match=expected_message):
         parse_isotp_frame(bytes.fromhex(raw_data))
 
 
-def test_invalid_flow_status_raises_value_error():
+def test_invalid_flow_status_raises_frame_parse_error():
     data = bytes.fromhex("33 00 00 00 00 00 00 00")
 
-    with pytest.raises(ValueError, match="Invalid Flow Status: 3"):
+    with pytest.raises(IsoTpFrameParseError, match="Invalid Flow Status: 3") as exc_info:
         parse_isotp_frame(data)
+
+    assert isinstance(exc_info.value.__cause__, ValueError)
+
+
+def test_parse_isotp_frame_rejects_non_bytes_input():
+    with pytest.raises(TypeError, match="data must be bytes"):
+        parse_isotp_frame([0x02, 0x10, 0x01])

@@ -1,3 +1,6 @@
+from isotp_errors import IsoTpSegmentationError
+
+
 MAX_CLASSIC_CAN_DATA_LENGTH = 8
 MIN_ISOTP_CAN_DATA_LENGTH = 3
 MAX_ISOTP_PAYLOAD_LENGTH = 0xFFF
@@ -8,13 +11,19 @@ def segment_isotp_payload(
     *,
     tx_data_length: int = MAX_CLASSIC_CAN_DATA_LENGTH,
 ) -> list[bytes]:
-    validate_tx_data_length(tx_data_length)
+    try:
+        validate_tx_data_length(tx_data_length)
+    except ValueError as exc:
+        raise IsoTpSegmentationError(str(exc)) from exc
+
+    if not isinstance(payload, bytes):
+        raise TypeError("payload must be bytes")
 
     if not payload:
-        raise ValueError("ISO-TP payload must not be empty")
+        raise IsoTpSegmentationError("ISO-TP payload must not be empty")
 
     if len(payload) > MAX_ISOTP_PAYLOAD_LENGTH:
-        raise ValueError("ISO-TP payload supports up to 4095 bytes")
+        raise IsoTpSegmentationError("ISO-TP payload supports up to 4095 bytes")
 
     max_single_frame_payload_length = tx_data_length - 1
     max_first_frame_payload_length = tx_data_length - 2

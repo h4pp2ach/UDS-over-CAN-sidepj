@@ -5,6 +5,17 @@ from typing import Callable
 
 import can
 
+from isotp_errors import (
+    IsoTpCanError,
+    IsoTpFlowControlError,
+    IsoTpFrameParseError,
+    IsoTpPayloadError,
+    IsoTpProtocolError,
+    IsoTpReassemblyError,
+    IsoTpSegmentationError,
+    IsoTpTimeoutError,
+    IsoTpTransportError,
+)
 from isotp_frame import (
     ConsecutiveFrame,
     FirstFrame,
@@ -25,26 +36,6 @@ MAX_STANDARD_CAN_ID = 0x7FF
 MAX_FLOW_CONTROL_BYTE = 0xFF
 DEFAULT_FRAME_TIMEOUT_SECONDS = 1.0
 DEFAULT_MAX_WAIT_FRAME_COUNT = 8
-
-
-class IsoTpTransportError(Exception):
-    pass
-
-
-class IsoTpTimeoutError(IsoTpTransportError):
-    pass
-
-
-class IsoTpProtocolError(IsoTpTransportError):
-    pass
-
-
-class IsoTpFlowControlError(IsoTpTransportError):
-    pass
-
-
-class IsoTpCanError(IsoTpTransportError):
-    pass
 
 
 @dataclass(frozen=True)
@@ -161,8 +152,8 @@ class IsoTpTransportLayer:
                 payload,
                 tx_data_length=self.tx_data_length,
             )
-        except ValueError as exc:
-            raise IsoTpProtocolError(str(exc)) from exc
+        except IsoTpSegmentationError as exc:
+            raise IsoTpPayloadError(str(exc)) from exc
 
         if len(frames) == 1:
             self._send_can_data(frames[0])
@@ -213,7 +204,7 @@ class IsoTpTransportLayer:
 
             try:
                 payload = reassembler.feed(raw_frame)
-            except ValueError as exc:
+            except IsoTpReassemblyError as exc:
                 raise IsoTpProtocolError(str(exc)) from exc
 
             if isinstance(raw_frame, SingleFrame):
@@ -279,8 +270,13 @@ class IsoTpTransportLayer:
         msg = self._recv_message_for_rx_id(timeout_seconds)
 
         try:
-            return parse_isotp_frame(bytes(msg.data))
-        except ValueError as exc:
+            data = bytes(msg.data)
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise IsoTpCanError("CAN message data is invalid") from exc
+
+        try:
+            return parse_isotp_frame(data)
+        except IsoTpFrameParseError as exc:
             raise IsoTpProtocolError(str(exc)) from exc
 
     def _recv_message_for_rx_id(self, timeout_seconds: float):

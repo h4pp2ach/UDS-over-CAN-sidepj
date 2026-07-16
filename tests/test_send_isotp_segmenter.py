@@ -1,5 +1,6 @@
 import pytest
 
+from isotp_errors import IsoTpSegmentationError
 from send_isotp_scenario import build_isotp_messages, find_scenario
 from isotp_tx_segmenter import segment_isotp_payload
 
@@ -94,8 +95,14 @@ def test_find_scenario_by_menu_key():
         (bytes([0xAA]) * 0x1000, "ISO-TP payload supports up to 4095 bytes"),
     ],
 )
-def test_invalid_payload_raises_value_error(payload, expected_message):
-    with pytest.raises(ValueError, match=expected_message):
+def test_invalid_payload_raises_segmentation_error(payload, expected_message):
+    with pytest.raises(IsoTpSegmentationError, match=expected_message):
+        segment_isotp_payload(payload)
+
+
+@pytest.mark.parametrize("payload", [bytearray([0x10]), [0x10], "10"])
+def test_non_bytes_payload_raises_type_error(payload):
+    with pytest.raises(TypeError, match="payload must be bytes"):
         segment_isotp_payload(payload)
 
 
@@ -104,9 +111,14 @@ def test_unknown_scenario_raises_value_error():
         find_scenario("9")
 
 
-def test_invalid_tx_data_length_raises_value_error():
-    with pytest.raises(ValueError, match="tx_data_length must be between 3 and 8"):
+def test_invalid_tx_data_length_raises_segmentation_error():
+    with pytest.raises(
+        IsoTpSegmentationError,
+        match="tx_data_length must be between 3 and 8",
+    ) as exc_info:
         segment_isotp_payload(bytes.fromhex("10 01"), tx_data_length=2)
+
+    assert isinstance(exc_info.value.__cause__, ValueError)
 
 
 def test_non_integer_tx_data_length_raises_type_error():
